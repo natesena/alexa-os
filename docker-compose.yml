@@ -1,0 +1,31 @@
+# Alexa-OS: LiveKit Server Configuration
+# Run with: docker-compose up -d
+
+services:
+  livekit:
+    image: livekit/livekit-server:latest
+    container_name: livekit-server
+    ports:
+      - "7880:7880"   # HTTP API
+      - "7881:7881"   # RTC/WebRTC
+      - "7882:7882"   # TURN/UDP
+    environment:
+      - LIVEKIT_KEYS=${LIVEKIT_API_KEY}:${LIVEKIT_API_SECRET}
+    command: --config /etc/livekit.yaml
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml:ro
+    restart: unless-stopped
+    network_mode: host  # Required for WebRTC to work properly with Tailscale
+
+  # Redis for LiveKit session management (optional but recommended)
+  redis:
+    image: redis:7-alpine
+    container_name: livekit-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+volumes:
+  redis_data:
