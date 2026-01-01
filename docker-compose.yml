@@ -1,31 +1,125 @@
-# Alexa-OS: LiveKit Server Configuration
+# Alexa-OS: Complete Voice Assistant Stack (Fully Local)
 # Run with: docker-compose up -d
+# For development: docker-compose up --build
+#
+# Stack:
+# - LiveKit Server: Real-time audio transport
+# - Voice Agent: Local Whisper STT + Ollama LLM
+# - Kokoro TTS: Local text-to-speech (OpenAI-compatible API)
+# - Ollama: External (your existing server via Tailscale)
 
 services:
+  # LiveKit Server - Real-time audio/video backbone
   livekit:
     image: livekit/livekit-server:latest
-    container_name: livekit-server
+    container_name: alexa-os-livekit
     ports:
-      - "7880:7880"   # HTTP API
-      - "7881:7881"   # RTC/WebRTC
-      - "7882:7882"   # TURN/UDP
+      - "7880:7880"   # HTTP API & WebSocket
+      - "7881:7881"   # RTC/WebRTC TCP
+      - "7882:7882/udp"   # TURN/UDP
+      - "50000-50100:50000-50100/udp"  # RTC port range
     environment:
       - LIVEKIT_KEYS=${LIVEKIT_API_KEY}:${LIVEKIT_API_SECRET}
-    command: --config /etc/livekit.yaml
+    command: --config /etc/livekit.yaml --node-ip=0.0.0.0
     volumes:
       - ./livekit.yaml:/etc/livekit.yaml:ro
+    networks:
+      - alexa-os-network
     restart: unless-stopped
-    network_mode: host  # Required for WebRTC to work properly with Tailscale
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:7880"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Kokoro TTS - Local text-to-speech with OpenAI-compatible API
+  # Provides /v1/audio/speech endpoint
+  kokoro:
+    image: ghcr.io/remsky/kokoro-fastapi-cpu:v0.2.2
+    container_name: alexa-os-kokoro
+    ports:
+      - "8880:8880"
+    volumes:
+      - kokoro_models:/app/models
+    networks:
+      - alexa-os-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8880/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    # For GPU acceleration, use this instead:
+    # image: ghcr.io/remsky/kokoro-fastapi-gpu:v0.2.2
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+  # Voice Agent - Local Whisper STT + Ollama LLM + Kokoro TTS
+  voice-agent:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: alexa-os-agent
+    depends_on:
+      livekit:
+        condition: service_healthy
+      kokoro:
+        condition: service_healthy
+    environment:
+      # LiveKit connection
+      - LIVEKIT_API_KEY=${LIVEKIT_API_KEY}
+      - LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET}
+      - LIVEKIT_URL=ws://livekit:7880
+
+      # STT - Local Whisper
+      - STT_PROVIDER=whisper
+      - WHISPER_MODEL=${WHISPER_MODEL:-base.en}
+      - WHISPER_DEVICE=${WHISPER_DEVICE:-auto}
+      - WHISPER_LANGUAGE=en
+
+      # TTS - Kokoro (local container)
+      - TTS_PROVIDER=kokoro
+      - KOKORO_URL=http://kokoro:8880
+      - KOKORO_VOICE=${KOKORO_VOICE:-af_bella}
+
+      # LLM - Ollama (external via Tailscale)
+      - LLM_PROVIDER=ollama
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://100.89.168.110:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-deepseek-r1:7b}
+
+      # Optional: Anthropic for future swap
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+
+      # Model cache
+      - MODEL_CACHE_DIR=/app/models
+    volumes:
+      - whisper_models:/app/models
+    networks:
+      - alexa-os-network
+    restart: unless-stopped
 
   # Redis for LiveKit session management (optional but recommended)
   redis:
     image: redis:7-alpine
-    container_name: livekit-redis
+    container_name: alexa-os-redis
     ports:
       - "6379:6379"
     volumes:
       - redis_data:/data
+    networks:
+      - alexa-os-network
     restart: unless-stopped
+
+networks:
+  alexa-os-network:
+    driver: bridge
 
 volumes:
   redis_data:
+  kokoro_models:
+  whisper_models:

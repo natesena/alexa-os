@@ -1,0 +1,41 @@
+# LiveKit Server Configuration
+# See: https://docs.livekit.io/realtime/self-hosting/deployment/
+
+port: 7880
+rtc:
+  port_range_start: 50000
+  port_range_end: 50100
+  use_external_ip: false
+  # For Tailscale, we'll use the Tailscale IP
+  # tcp_port: 7881
+
+# Redis is optional but recommended for multi-node deployments
+# redis:
+#   address: localhost:6379
+
+# Logging
+logging:
+  level: info
+  # json: true  # Enable for production
+
+# Room settings
+room:
+  auto_create: true
+  empty_timeout: 300  # 5 minutes
+  max_participants: 10
+
+# Turn server for NAT traversal
+turn:
+  enabled: true
+  domain: localhost
+  # tls_port: 5349
+  udp_port: 3478
+
+# Webhook for events (optional)
+# webhook:
+#   urls:
+#     - http://localhost:8080/webhook
+#   api_key: your_webhook_key
+
+# Keys are loaded from environment variable LIVEKIT_KEYS
+# Format: LIVEKIT_KEYS=api_key:api_secret

@@ -1,0 +1,65 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "alexa-os-server"
+version = "0.1.0"
+description = "Alexa-OS Voice Assistant Server - Local STT, TTS, and LLM"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [
+    { name = "Nathaniel Sena" }
+]
+
+dependencies = [
+    # LiveKit Agents core with VAD and turn detection
+    "livekit-agents[silero,turn-detector]>=1.0.0",
+
+    # STT - Local Whisper via faster-whisper (CTranslate2-based)
+    "faster-whisper>=1.0.0",
+
+    # TTS - OpenAI-compatible client (connects to Kokoro FastAPI)
+    "livekit-plugins-openai>=0.10.0",
+
+    # LLM - Ollama client for local LLM
+    "ollama>=0.3.0",
+
+    # Utilities
+    "python-dotenv>=1.0.0",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+    "httpx>=0.27.0",
+    "numpy>=1.24.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+]
+# For MCP tool integration (future)
+mcp = [
+    "mcp>=1.0.0",
+]
+# For Anthropic LLM support (future)
+anthropic = [
+    "livekit-plugins-anthropic>=0.3.0",
+]
+
+[project.scripts]
+alexa-os = "src.main:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.black]
+line-length = 100
+target-version = ["py310"]
