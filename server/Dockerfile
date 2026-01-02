@@ -61,5 +61,5 @@ ENV MODEL_CACHE_DIR=/app/models
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD python -c "import src.config; print('OK')" || exit 1
 
-# Run the agent
-CMD ["python", "-m", "src.main"]
+# Run the agent (start = production mode, dev = development mode)
+CMD ["python", "-m", "src.main", "start"]
