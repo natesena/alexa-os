@@ -21,6 +21,16 @@ async def fetch_mcp_tools(url: str, headers: Optional[dict[str, str]] = None) ->
     """
     logger.info(f"[DEBUG] fetch_mcp_tools called for URL: {url}")
     try:
+        # MCP JSON-RPC requires proper content-type headers
+        # OpenMemory MCP requires Accept to include both json and event-stream
+        request_headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+        }
+        # Merge with any custom headers (e.g., Authorization)
+        if headers:
+            request_headers.update(headers)
+
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.post(
                 url,
@@ -30,7 +40,7 @@ async def fetch_mcp_tools(url: str, headers: Optional[dict[str, str]] = None) ->
                     "method": "tools/list",
                     "params": {}
                 },
-                headers=headers or {}
+                headers=request_headers
             )
             response.raise_for_status()
             data = response.json()

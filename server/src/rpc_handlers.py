@@ -229,33 +229,23 @@ class AgentRpcHandlers:
             return json.dumps({"success": False, "error": str(e)})
 
     async def _list_tools(self, data: RpcInvocationData) -> str:
-        """List available MCP tools."""
+        """List all available MCP tools from cache."""
         try:
             all_tools = []
-            for server in self._mcp_servers:
-                try:
-                    # MCP servers expose tools via list_tools()
-                    if hasattr(server, "list_tools"):
-                        tools = await server.list_tools()
-                        for tool in tools:
-                            all_tools.append(
-                                {
-                                    "name": getattr(tool, "name", str(tool)),
-                                    "description": getattr(tool, "description", ""),
-                                    "server": type(server).__name__,
-                                }
-                            )
-                except Exception as e:
-                    logger.warning(f"Failed to list tools from server: {e}")
+            for server_name, tools in self._mcp_tool_cache.items():
+                for tool in tools:
+                    all_tools.append({
+                        "name": tool.get("name", "unknown"),
+                        "description": tool.get("description", ""),
+                        "server": server_name,
+                    })
 
             logger.info(f"Listed {len(all_tools)} MCP tools")
-            return json.dumps(
-                {
-                    "success": True,
-                    "tools": all_tools,
-                    "count": len(all_tools),
-                }
-            )
+            return json.dumps({
+                "success": True,
+                "tools": all_tools,
+                "count": len(all_tools),
+            })
         except Exception as e:
             logger.error(f"Failed to list tools: {e}")
             return json.dumps({"success": False, "error": str(e)})

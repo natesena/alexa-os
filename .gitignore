@@ -52,3 +52,6 @@ out/
 # Docker
 .docker/
 playground/
+
+# MCP config (contains API keys)
+server/mcp_servers.json
