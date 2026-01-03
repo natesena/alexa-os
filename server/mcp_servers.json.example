@@ -2,12 +2,20 @@
   "servers": [
     {
       "name": "openmemory",
+      "type": "http",
       "url": "http://localhost:8090/mcp",
       "enabled": true,
       "allowed_tools": null,
       "headers": {
         "Authorization": "Bearer YOUR_API_KEY_HERE"
       }
+    },
+    {
+      "name": "chrome-devtools",
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "chrome-devtools-mcp@latest", "--browser-url=http://127.0.0.1:9222"],
+      "enabled": false
     }
   ]
 }

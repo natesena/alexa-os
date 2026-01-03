@@ -2,11 +2,33 @@
 
 import json
 import logging
+import os
+from pathlib import Path
 from typing import Callable, Optional, Any
 from livekit.rtc import Room, RpcInvocationData
 import ollama
 
 from . import mcp_config
+
+# Config file for persistent agent settings (system prompt, etc.)
+AGENT_CONFIG_PATH = Path(__file__).parent.parent / "agent_config.json"
+
+DEFAULT_SYSTEM_PROMPT = """You are Jarvis, a helpful voice assistant.
+
+Key behaviors:
+- Keep responses concise and conversational - this is voice, not text
+- Be friendly and natural in tone
+- When you don't know something, say so directly
+- For complex questions, break down the answer into digestible parts
+- Use simple language, avoid jargon unless asked
+
+You can help with:
+- Answering questions on any topic
+- Having casual conversations
+- Providing information and explanations
+- Helping with tasks and planning
+
+Remember: You're speaking, not writing. Keep it brief and natural."""
 
 logger = logging.getLogger("alexa-os")
 
@@ -27,6 +49,10 @@ class AgentRpcHandlers:
         self._mcp_server_status: dict[str, dict] = {}  # name -> {status, error, tool_count}
         self._mcp_tool_cache: dict[str, list[dict]] = {}  # name -> list of tool metadata
         self._on_mcp_change: Optional[Callable[[], Any]] = None
+        self._on_vad_change: Optional[Callable[[dict], Any]] = None
+        # System prompt
+        self._system_prompt: str = self._load_system_prompt()
+        self._on_system_prompt_change: Optional[Callable[[str], Any]] = None
         # Wake word state
         self._wake_word_enabled: bool = False
         self._wake_word_state: str = "disabled"  # "disabled", "listening", "active"
@@ -71,6 +97,58 @@ class AgentRpcHandlers:
     def set_mcp_change_callback(self, callback: Callable[[], Any]):
         """Set callback for MCP configuration changes (add/remove/toggle)."""
         self._on_mcp_change = callback
+
+    def set_vad_change_callback(self, callback: Callable[[dict], Any]):
+        """Set callback for VAD settings changes."""
+        self._on_vad_change = callback
+
+    def set_system_prompt_change_callback(self, callback: Callable[[str], Any]):
+        """Set callback for system prompt changes."""
+        self._on_system_prompt_change = callback
+
+    def get_system_prompt(self) -> str:
+        """Get the current system prompt."""
+        return self._system_prompt
+
+    def _load_config(self) -> dict:
+        """Load the entire config from persistent file."""
+        try:
+            if AGENT_CONFIG_PATH.exists():
+                with open(AGENT_CONFIG_PATH, "r") as f:
+                    return json.load(f)
+        except Exception as e:
+            logger.warning(f"Failed to load agent config: {e}")
+        return {}
+
+    def _save_config(self, updates: dict):
+        """Save updates to the persistent config file."""
+        try:
+            config = self._load_config()
+            config.update(updates)
+            with open(AGENT_CONFIG_PATH, "w") as f:
+                json.dump(config, f, indent=2)
+            logger.info(f"Saved config updates: {list(updates.keys())}")
+        except Exception as e:
+            logger.error(f"Failed to save agent config: {e}")
+            raise
+
+    def _load_system_prompt(self) -> str:
+        """Load system prompt from persistent config file."""
+        config = self._load_config()
+        return config.get("system_prompt", DEFAULT_SYSTEM_PROMPT)
+
+    def _load_vad_settings(self) -> Optional[dict]:
+        """Load VAD settings from persistent config file."""
+        config = self._load_config()
+        return config.get("vad_settings")
+
+    def _save_system_prompt(self, prompt: str):
+        """Save system prompt to persistent config file."""
+        self._save_config({"system_prompt": prompt})
+
+    def _save_vad_settings(self, settings: dict):
+        """Save VAD settings to persistent config file."""
+        self._save_config({"vad_settings": settings})
 
     def set_mcp_tool_cache(self, cache: dict[str, list[dict]]):
         """Set the MCP tool metadata cache (server_name -> list of tool dicts)."""
@@ -119,6 +197,19 @@ class AgentRpcHandlers:
         async def handle_get_wake_word_state(data: RpcInvocationData) -> str:
             return await self._get_wake_word_state(data)
 
+        @local.register_rpc_method("set_vad_settings")
+        async def handle_set_vad_settings(data: RpcInvocationData) -> str:
+            return await self._set_vad_settings(data)
+
+        # System prompt RPC methods
+        @local.register_rpc_method("get_system_prompt")
+        async def handle_get_system_prompt(data: RpcInvocationData) -> str:
+            return await self._get_system_prompt_rpc(data)
+
+        @local.register_rpc_method("set_system_prompt")
+        async def handle_set_system_prompt(data: RpcInvocationData) -> str:
+            return await self._set_system_prompt_rpc(data)
+
         # MCP management RPC methods
         @local.register_rpc_method("list_mcp_servers")
         async def handle_list_mcp_servers(data: RpcInvocationData) -> str:
@@ -146,8 +237,8 @@ class AgentRpcHandlers:
 
         logger.info(
             "Registered RPC handlers: list_models, switch_model, interrupt, list_tools, get_agent_state, "
-            "get_wake_word_state, list_mcp_servers, add_mcp_server, remove_mcp_server, toggle_mcp_server, "
-            "list_mcp_tools, toggle_mcp_tool"
+            "get_wake_word_state, set_vad_settings, list_mcp_servers, add_mcp_server, remove_mcp_server, "
+            "toggle_mcp_server, list_mcp_tools, toggle_mcp_tool"
         )
 
     async def _list_models(self, data: RpcInvocationData) -> str:
@@ -277,6 +368,100 @@ class AgentRpcHandlers:
             }
         )
 
+    async def _set_vad_settings(self, data: RpcInvocationData) -> str:
+        """Update VAD settings."""
+        try:
+            payload = json.loads(data.payload) if data.payload else {}
+
+            # Validate and extract settings
+            new_settings = {}
+            if "activation_threshold" in payload:
+                val = float(payload["activation_threshold"])
+                if 0.0 <= val <= 1.0:
+                    new_settings["activation_threshold"] = val
+                else:
+                    return json.dumps({"success": False, "error": "activation_threshold must be between 0.0 and 1.0"})
+
+            if "min_speech_duration" in payload:
+                val = float(payload["min_speech_duration"])
+                if val >= 0:
+                    new_settings["min_speech_duration"] = val
+                else:
+                    return json.dumps({"success": False, "error": "min_speech_duration must be >= 0"})
+
+            if "min_silence_duration" in payload:
+                val = float(payload["min_silence_duration"])
+                if val >= 0:
+                    new_settings["min_silence_duration"] = val
+                else:
+                    return json.dumps({"success": False, "error": "min_silence_duration must be >= 0"})
+
+            if not new_settings:
+                return json.dumps({"success": False, "error": "No valid settings provided"})
+
+            # Update internal state
+            if self._vad_settings:
+                self._vad_settings.update(new_settings)
+            else:
+                self._vad_settings = new_settings
+
+            # Persist to config file
+            self._save_vad_settings(self._vad_settings)
+
+            # Call callback if set
+            if self._on_vad_change:
+                await self._on_vad_change(self._vad_settings)
+
+            logger.info(f"Updated and persisted VAD settings: {new_settings}")
+            return json.dumps({
+                "success": True,
+                "settings": self._vad_settings,
+            })
+        except Exception as e:
+            logger.error(f"Failed to set VAD settings: {e}")
+            return json.dumps({"success": False, "error": str(e)})
+
+    # System Prompt RPC Methods
+
+    async def _get_system_prompt_rpc(self, data: RpcInvocationData) -> str:
+        """Get the current system prompt."""
+        try:
+            return json.dumps({
+                "success": True,
+                "system_prompt": self._system_prompt,
+            })
+        except Exception as e:
+            logger.error(f"Failed to get system prompt: {e}")
+            return json.dumps({"success": False, "error": str(e)})
+
+    async def _set_system_prompt_rpc(self, data: RpcInvocationData) -> str:
+        """Set and persist the system prompt."""
+        try:
+            payload = json.loads(data.payload) if data.payload else {}
+            new_prompt = payload.get("system_prompt", "").strip()
+
+            if not new_prompt:
+                return json.dumps({"success": False, "error": "System prompt cannot be empty"})
+
+            # Update internal state
+            self._system_prompt = new_prompt
+
+            # Persist to config file
+            self._save_system_prompt(new_prompt)
+
+            # Call callback if set (to update the agent)
+            if self._on_system_prompt_change:
+                await self._on_system_prompt_change(new_prompt)
+
+            logger.info(f"Updated system prompt (length: {len(new_prompt)} chars)")
+            return json.dumps({
+                "success": True,
+                "system_prompt": new_prompt,
+            })
+        except Exception as e:
+            logger.error(f"Failed to set system prompt: {e}")
+            return json.dumps({"success": False, "error": str(e)})
+
     # MCP Management RPC Methods
 
     async def _list_mcp_servers(self, data: RpcInvocationData) -> str:
@@ -297,15 +482,31 @@ class AgentRpcHandlers:
                 if not server_cfg.enabled:
                     status_info["status"] = "disabled"
 
-                servers.append({
+                server_info = {
                     "name": server_cfg.name,
-                    "url": server_cfg.url,
+                    "type": server_cfg.type,
                     "enabled": server_cfg.enabled,
                     "allowed_tools": server_cfg.allowed_tools,
                     "status": status_info["status"],
                     "error": status_info.get("error"),
                     "tool_count": status_info.get("tool_count", 0),
-                })
+                }
+
+                # Add type-specific fields
+                if server_cfg.type == "http":
+                    server_info["url"] = server_cfg.url
+                    if server_cfg.headers:
+                        server_info["headers"] = server_cfg.headers
+                else:  # stdio
+                    server_info["command"] = server_cfg.command
+                    if server_cfg.args:
+                        server_info["args"] = server_cfg.args
+                    if server_cfg.env:
+                        server_info["env"] = server_cfg.env
+                    if server_cfg.cwd:
+                        server_info["cwd"] = server_cfg.cwd
+
+                servers.append(server_info)
 
             logger.info(f"Listed {len(servers)} MCP server(s)")
             return json.dumps({
@@ -317,20 +518,44 @@ class AgentRpcHandlers:
             return json.dumps({"success": False, "error": str(e)})
 
     async def _add_mcp_server(self, data: RpcInvocationData) -> str:
-        """Add a new MCP server."""
+        """Add a new MCP server (HTTP or stdio)."""
         try:
             payload = json.loads(data.payload) if data.payload else {}
             name = payload.get("name")
-            url = payload.get("url")
+            server_type = payload.get("type", "http")
             enabled = payload.get("enabled", True)
-            headers = payload.get("headers")  # Optional headers dict
 
             if not name:
                 return json.dumps({"success": False, "error": "Server name is required"})
-            if not url:
-                return json.dumps({"success": False, "error": "Server URL is required"})
 
-            success, message = mcp_config.add_server(name, url, enabled, headers=headers)
+            if server_type == "stdio":
+                # Stdio server: requires command
+                command = payload.get("command")
+                if not command:
+                    return json.dumps({"success": False, "error": "Command is required for stdio servers"})
+
+                success, message = mcp_config.add_server(
+                    name=name,
+                    server_type="stdio",
+                    command=command,
+                    args=payload.get("args"),
+                    env=payload.get("env"),
+                    cwd=payload.get("cwd"),
+                    enabled=enabled,
+                )
+            else:
+                # HTTP server: requires url
+                url = payload.get("url")
+                if not url:
+                    return json.dumps({"success": False, "error": "URL is required for HTTP servers"})
+
+                success, message = mcp_config.add_server(
+                    name=name,
+                    server_type="http",
+                    url=url,
+                    headers=payload.get("headers"),
+                    enabled=enabled,
+                )
 
             if success and self._on_mcp_change:
                 await self._on_mcp_change()

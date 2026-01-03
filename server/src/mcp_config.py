@@ -4,8 +4,8 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Optional
-from pydantic import BaseModel
+from typing import Literal, Optional
+from pydantic import BaseModel, model_validator
 
 logger = logging.getLogger("alexa-os")
 
@@ -14,12 +14,37 @@ DEFAULT_CONFIG_PATH = Path(__file__).parent.parent / "mcp_servers.json"
 
 
 class MCPServerConfig(BaseModel):
-    """Configuration for a single MCP server."""
+    """Configuration for a single MCP server.
+
+    Supports two transport types:
+    - "http": HTTP-based MCP servers (requires url)
+    - "stdio": Command-based MCP servers (requires command)
+    """
     name: str
-    url: str
+    type: Literal["http", "stdio"] = "http"  # Default to HTTP for backward compatibility
+
+    # HTTP-specific fields
+    url: Optional[str] = None
+    headers: Optional[dict[str, str]] = None  # Optional headers (e.g., Authorization)
+
+    # Stdio-specific fields
+    command: Optional[str] = None
+    args: Optional[list[str]] = None
+    env: Optional[dict[str, str]] = None
+    cwd: Optional[str] = None
+
+    # Common fields
     enabled: bool = True
     allowed_tools: Optional[list[str]] = None  # None means all tools allowed
-    headers: Optional[dict[str, str]] = None  # Optional headers (e.g., Authorization)
+
+    @model_validator(mode='after')
+    def validate_type_fields(self):
+        """Validate that required fields are present based on server type."""
+        if self.type == "http" and not self.url:
+            raise ValueError("HTTP servers require 'url' field")
+        if self.type == "stdio" and not self.command:
+            raise ValueError("Stdio servers require 'command' field")
+        return self
 
 
 class MCPConfig(BaseModel):
@@ -86,13 +111,24 @@ def save_config(config: MCPConfig) -> bool:
 
 def add_server(
     name: str,
-    url: str,
+    server_type: Literal["http", "stdio"] = "http",
+    # HTTP fields
+    url: Optional[str] = None,
+    headers: Optional[dict[str, str]] = None,
+    # Stdio fields
+    command: Optional[str] = None,
+    args: Optional[list[str]] = None,
+    env: Optional[dict[str, str]] = None,
+    cwd: Optional[str] = None,
+    # Common fields
     enabled: bool = True,
     allowed_tools: Optional[list[str]] = None,
-    headers: Optional[dict[str, str]] = None
 ) -> tuple[bool, str]:
     """
     Add a new MCP server to the configuration.
+
+    For HTTP servers, url is required.
+    For Stdio servers, command is required.
 
     Returns (success, message) tuple.
     """
@@ -102,21 +138,34 @@ def add_server(
     if any(s.name == name for s in config.servers):
         return False, f"Server with name '{name}' already exists"
 
-    # Check for duplicate URLs
-    if any(s.url == url for s in config.servers):
-        return False, f"Server with URL '{url}' already exists"
+    # Check for duplicate URLs (HTTP only)
+    if server_type == "http" and url:
+        if any(s.url == url for s in config.servers):
+            return False, f"Server with URL '{url}' already exists"
 
-    new_server = MCPServerConfig(
-        name=name,
-        url=url,
-        enabled=enabled,
-        allowed_tools=allowed_tools,
-        headers=headers
-    )
+    try:
+        new_server = MCPServerConfig(
+            name=name,
+            type=server_type,
+            url=url,
+            headers=headers,
+            command=command,
+            args=args,
+            env=env,
+            cwd=cwd,
+            enabled=enabled,
+            allowed_tools=allowed_tools,
+        )
+    except ValueError as e:
+        return False, str(e)
+
     config.servers.append(new_server)
 
     if save_config(config):
-        logger.info(f"Added MCP server: {name} ({url})")
+        if server_type == "http":
+            logger.info(f"Added HTTP MCP server: {name} ({url})")
+        else:
+            logger.info(f"Added Stdio MCP server: {name} ({command})")
         return True, f"Added server '{name}'"
     else:
         return False, "Failed to save configuration"
