@@ -19,7 +19,7 @@ services:
     command: >
       --dev
       --bind 0.0.0.0
-      --node-ip 0.0.0.0
+      --node-ip 127.0.0.1
     networks:
       - alexa-os-network
     restart: unless-stopped

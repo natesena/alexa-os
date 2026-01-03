@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Alexa-OS Voice Test</title>
+  <script src="https://unpkg.com/livekit-client/dist/livekit-client.umd.js"></script>
+  <style>
+    body { font-family: system-ui; max-width: 600px; margin: 50px auto; padding: 20px; }
+    button { padding: 15px 30px; font-size: 18px; margin: 10px; cursor: pointer; }
+    #status { padding: 20px; background: #f0f0f0; border-radius: 8px; margin: 20px 0; }
+    .connected { background: #d4edda !important; }
+    .error { background: #f8d7da !important; }
+    input { padding: 10px; margin: 5px 0; width: 100%; box-sizing: border-box; font-size: 14px; }
+    label { font-weight: bold; display: block; margin-top: 10px; }
+    .config { background: #f9f9f9; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
+  </style>
+</head>
+<body>
+  <h1>Alexa-OS Voice Test</h1>
+
+  <div class="config">
+    <label>LiveKit URL</label>
+    <input type="text" id="url" value="ws://localhost:7880">
+    <label>API Key</label>
+    <input type="text" id="apiKey" value="APIKey9dQC8CcgDzlg">
+    <label>API Secret</label>
+    <input type="password" id="apiSecret" value="NTl2UJtY9GcB5WQ9U1WbewC7TXoZ5zdIWwJgab5Q">
+  </div>
+
+  <div id="status">Click Connect to start</div>
+
+  <button onclick="connect()">Connect</button>
+  <button onclick="disconnect()">Disconnect</button>
+
+  <div id="transcript" style="margin-top: 20px; padding: 15px; background: #f5f5f5; border-radius: 8px; min-height: 200px; max-height: 400px; overflow-y: auto; font-family: monospace;">
+    <div style="color: #888;">Transcript will appear here...</div>
+  </div>
+
+  <script>
+    let room = null;
+    const status = document.getElementById('status');
+    const transcript = document.getElementById('transcript');
+
+    function log(msg, type = 'system') {
+      const div = document.createElement('div');
+      div.style.marginBottom = '8px';
+      if (type === 'user') {
+        div.innerHTML = '<strong style="color: blue;">You:</strong> ' + msg;
+      } else if (type === 'agent') {
+        div.innerHTML = '<strong style="color: green;">Agent:</strong> ' + msg;
+      } else {
+        div.innerHTML = '<em style="color: #888;">' + msg + '</em>';
+      }
+      transcript.appendChild(div);
+      transcript.scrollTop = transcript.scrollHeight;
+    }
+
+    async function connect() {
+      const LIVEKIT_URL = document.getElementById('url').value;
+      const API_KEY = document.getElementById('apiKey').value;
+      const API_SECRET = document.getElementById('apiSecret').value;
+
+      if (!API_KEY || !API_SECRET) {
+        status.textContent = 'Please enter API Key and Secret from your .env file';
+        status.className = 'error';
+        return;
+      }
+
+      try {
+        transcript.innerHTML = '';
+        log('Connecting...');
+        status.textContent = 'Getting token...';
+        status.className = '';
+
+        const token = await getToken(API_KEY, API_SECRET);
+
+        status.textContent = 'Connecting to LiveKit...';
+
+        room = new LivekitClient.Room();
+
+        room.on('connected', () => {
+          status.textContent = 'Connected! Waiting for agent...';
+          status.className = 'connected';
+          log('Connected to room. Waiting for agent to join...');
+        });
+
+        room.on('disconnected', () => {
+          status.textContent = 'Disconnected';
+          status.className = '';
+        });
+
+        room.on('trackSubscribed', (track) => {
+          if (track.kind === 'audio') {
+            const audio = track.attach();
+            document.body.appendChild(audio);
+          }
+        });
+
+        room.on('participantConnected', (p) => {
+          status.textContent = 'Agent joined! Speak now...';
+          log('Agent connected: ' + p.identity);
+        });
+
+        room.on('dataReceived', (data, participant) => {
+          try {
+            const msg = JSON.parse(new TextDecoder().decode(data));
+            if (msg.type === 'transcription') {
+              log(msg.text, msg.is_final ? 'user' : 'system');
+            } else if (msg.type === 'agent_response') {
+              log(msg.text, 'agent');
+            }
+          } catch (e) {
+            console.log('Data received:', data);
+          }
+        });
+
+        room.on('transcriptionReceived', (segments, participant) => {
+          for (const seg of segments) {
+            if (participant?.identity?.includes('agent')) {
+              log(seg.text, 'agent');
+            } else {
+              log(seg.text, 'user');
+            }
+          }
+        });
+
+        await room.connect(LIVEKIT_URL, token);
+        await room.localParticipant.setMicrophoneEnabled(true);
+        status.textContent = 'Connected! Microphone active. Speak now...';
+
+      } catch (e) {
+        status.textContent = 'Error: ' + e.message;
+        status.className = 'error';
+        console.error(e);
+      }
+    }
+
+    function disconnect() {
+      if (room) {
+        room.disconnect();
+        room = null;
+      }
+      status.textContent = 'Disconnected';
+      status.className = '';
+    }
+
+    async function getToken(API_KEY, API_SECRET) {
+      const header = { alg: 'HS256', typ: 'JWT' };
+      const now = Math.floor(Date.now() / 1000);
+      const payload = {
+        iss: API_KEY,
+        sub: 'test-user-' + Math.random().toString(36).substr(2, 9),
+        iat: now,
+        nbf: now,
+        exp: now + 3600,
+        video: { room: 'voice-test', roomJoin: true }
+      };
+
+      const enc = new TextEncoder();
+      const key = await crypto.subtle.importKey(
+        'raw', enc.encode(API_SECRET),
+        { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']
+      );
+
+      const b64 = (obj) => btoa(JSON.stringify(obj)).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+      const data = b64(header) + '.' + b64(payload);
+      const sig = await crypto.subtle.sign('HMAC', key, enc.encode(data));
+      const sigB64 = btoa(String.fromCharCode(...new Uint8Array(sig))).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+
+      return data + '.' + sigB64;
+    }
+  </script>
+</body>
+</html>

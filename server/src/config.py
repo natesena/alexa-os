@@ -22,7 +22,7 @@ class Settings(BaseSettings):
 
     # STT Configuration - Local Whisper by default
     stt_provider: str = Field(default="whisper", alias="STT_PROVIDER")  # "whisper" only for now
-    whisper_model: str = Field(default="base.en", alias="WHISPER_MODEL")
+    whisper_model: str = Field(default="large-v3-turbo", alias="WHISPER_MODEL")
     whisper_device: str = Field(default="auto", alias="WHISPER_DEVICE")  # auto, cpu, cuda, mps
     whisper_compute_type: str = Field(default="auto", alias="WHISPER_COMPUTE_TYPE")
     whisper_language: str = Field(default="en", alias="WHISPER_LANGUAGE")
@@ -34,15 +34,26 @@ class Settings(BaseSettings):
     kokoro_speed: float = Field(default=1.0, alias="KOKORO_SPEED")
 
     # VAD Configuration
-    vad_threshold: float = Field(default=0.5, alias="VAD_THRESHOLD")
+    # activation_threshold: 0.6 recommended for noisy environments (default Silero is 0.5)
+    vad_threshold: float = Field(default=0.6, alias="VAD_THRESHOLD")
     vad_min_speech_duration: float = Field(default=0.1, alias="VAD_MIN_SPEECH_DURATION")
     vad_min_silence_duration: float = Field(default=0.5, alias="VAD_MIN_SILENCE_DURATION")
 
     # OpenMemory MCP
     openmemory_url: str | None = Field(default=None, alias="OPENMEMORY_URL")
 
-    # Model download directory
-    model_cache_dir: str = Field(default="/app/models", alias="MODEL_CACHE_DIR")
+    # Wake Word Detection - openWakeWord for "Hey Jarvis"
+    wake_word_enabled: bool = Field(default=True, alias="WAKE_WORD_ENABLED")
+    wake_word_model: str = Field(default="hey_jarvis_v0.1", alias="WAKE_WORD_MODEL")
+    wake_word_threshold: float = Field(default=0.5, alias="WAKE_WORD_THRESHOLD")
+    wake_word_cooldown: float = Field(default=2.0, alias="WAKE_WORD_COOLDOWN")
+    wake_word_timeout: float = Field(default=10.0, alias="WAKE_WORD_TIMEOUT")
+
+    # Model download directory (defaults to ~/.cache/alexa-os for local dev)
+    model_cache_dir: str = Field(
+        default=os.path.expanduser("~/.cache/alexa-os/models"),
+        alias="MODEL_CACHE_DIR"
+    )
 
     class Config:
         env_file = ".env"

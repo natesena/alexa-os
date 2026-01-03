@@ -1,0 +1,13 @@
+{
+  "servers": [
+    {
+      "name": "openmemory",
+      "url": "http://100.74.174.10:8090/mcp",
+      "enabled": true,
+      "allowed_tools": null,
+      "headers": {
+        "Authorization": "Bearer e8993566ab41abc81108c32dc941c476"
+      }
+    }
+  ]
+}

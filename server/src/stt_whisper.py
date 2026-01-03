@@ -114,15 +114,13 @@ class FasterWhisperSTT(STT):
                 audio_array = audio_array / 32768.0
 
         # Run transcription
+        # NOTE: vad_filter=False because we already use Silero VAD via StreamAdapter
+        # Double VAD filtering can cause audio quality issues
         segments, info = model.transcribe(
             audio_array,
             language=lang,
             beam_size=5,
-            vad_filter=True,  # Use Silero VAD for better segmentation
-            vad_parameters=dict(
-                min_silence_duration_ms=500,
-                speech_pad_ms=200,
-            ),
+            vad_filter=False,
         )
 
         # Collect all segments into final transcript

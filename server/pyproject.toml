@@ -13,8 +13,8 @@ authors = [
 ]
 
 dependencies = [
-    # LiveKit Agents core with VAD and turn detection
-    "livekit-agents[silero,turn-detector]>=1.0.0",
+    # LiveKit Agents core with VAD, turn detection, and MCP support
+    "livekit-agents[silero,turn-detector,mcp]>=1.0.0",
 
     # STT - Local Whisper via faster-whisper (CTranslate2-based)
     "faster-whisper>=1.0.0",
@@ -24,6 +24,9 @@ dependencies = [
 
     # LLM - Ollama client for local LLM
     "ollama>=0.3.0",
+
+    # Wake Word Detection - openWakeWord for "Hey Jarvis" detection
+    "openwakeword>=0.6.0",
 
     # Utilities
     "python-dotenv>=1.0.0",
