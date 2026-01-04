@@ -26,14 +26,30 @@ def create_stt():
     return whisper_stt
 
 
-def create_vad():
-    """Create Silero VAD for voice activity detection."""
-    logger.info("Creating Silero VAD")
+def create_vad(vad_settings: dict | None = None):
+    """Create Silero VAD for voice activity detection.
+
+    Args:
+        vad_settings: Optional dict with activation_threshold, min_speech_duration,
+                      min_silence_duration. Falls back to config defaults if not provided.
+    """
+    # Use provided settings or fall back to config defaults
+    activation_threshold = settings.vad_threshold
+    min_speech_duration = settings.vad_min_speech_duration
+    min_silence_duration = settings.vad_min_silence_duration
+
+    if vad_settings:
+        activation_threshold = vad_settings.get("activation_threshold", activation_threshold)
+        min_speech_duration = vad_settings.get("min_speech_duration", min_speech_duration)
+        min_silence_duration = vad_settings.get("min_silence_duration", min_silence_duration)
+
+    logger.info(f"Creating Silero VAD: threshold={activation_threshold}, "
+                f"min_speech={min_speech_duration}s, min_silence={min_silence_duration}s")
 
     vad = silero.VAD.load(
-        min_speech_duration=settings.vad_min_speech_duration,
-        min_silence_duration=settings.vad_min_silence_duration,
-        activation_threshold=settings.vad_threshold,
+        min_speech_duration=min_speech_duration,
+        min_silence_duration=min_silence_duration,
+        activation_threshold=activation_threshold,
     )
 
     return vad
@@ -78,6 +94,8 @@ def create_tts():
 
 def create_llm():
     """Create LLM instance - Ollama via OpenAI-compatible API."""
+    import httpx
+
     if settings.llm_provider == "ollama":
         base_url = settings.ollama_host.rstrip('/') + '/v1'
         logger.info(f"Creating Ollama LLM via OpenAI plugin: {settings.ollama_model} at {base_url}")
@@ -86,6 +104,7 @@ def create_llm():
             model=settings.ollama_model,
             base_url=base_url,
             api_key="ollama",
+            timeout=httpx.Timeout(None),  # No timeout - wait indefinitely
         )
     elif settings.llm_provider == "anthropic":
         if not settings.anthropic_api_key:

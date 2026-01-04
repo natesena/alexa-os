@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     vad_min_speech_duration: float = Field(default=0.1, alias="VAD_MIN_SPEECH_DURATION")
     vad_min_silence_duration: float = Field(default=0.5, alias="VAD_MIN_SILENCE_DURATION")
 
+    # Agent Configuration
+    max_tool_steps: int = Field(default=100, alias="MAX_TOOL_STEPS")  # Max tool calls per turn (100 = effectively unlimited)
+    llm_timeout: float = Field(default=600.0, alias="LLM_TIMEOUT")  # LLM request timeout in seconds (600 = 10 min)
+
     # OpenMemory MCP
     openmemory_url: str | None = Field(default=None, alias="OPENMEMORY_URL")
 

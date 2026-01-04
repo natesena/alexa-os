@@ -6,6 +6,8 @@ import os
 import json
 from livekit.agents import JobContext, WorkerOptions, cli
 from livekit.agents.voice import Agent, AgentSession, AgentStateChangedEvent, UserStateChangedEvent
+from livekit.agents.voice.agent_session import SessionConnectOptions
+from livekit.agents.types import APIConnectOptions
 
 from .config import settings
 from .rpc_handlers import AgentRpcHandlers
@@ -55,10 +57,15 @@ async def entrypoint(ctx: JobContext):
     rpc_handlers = AgentRpcHandlers(room=ctx.room, ollama_host=settings.ollama_host)
     telemetry = TelemetryEmitter(room=ctx.room)
 
+    # Load persisted VAD settings (for startup)
+    persisted_vad = rpc_handlers._load_vad_settings()
+    if persisted_vad:
+        logger.info(f"Using persisted VAD settings: {persisted_vad}")
+
     # Create voice pipeline components
     logger.info("Initializing voice pipeline components...")
     whisper_stt = create_stt()
-    vad = create_vad()
+    vad = create_vad(vad_settings=persisted_vad)
     streaming_stt = create_streaming_stt(whisper_stt, vad)
     tts = create_tts()
     llm = create_llm()
@@ -89,11 +96,13 @@ async def entrypoint(ctx: JobContext):
     rpc_handlers.set_model(settings.ollama_model)
     rpc_handlers.set_stt_model(settings.whisper_model)
     rpc_handlers.set_tts_provider(f"{settings.tts_provider} ({settings.kokoro_voice})")
-    rpc_handlers.set_vad_settings({
+    # Use persisted VAD settings if available, otherwise use defaults
+    vad_settings_for_rpc = persisted_vad or {
         "activation_threshold": settings.vad_threshold,
         "min_speech_duration": settings.vad_min_speech_duration,
         "min_silence_duration": settings.vad_min_silence_duration,
-    })
+    }
+    rpc_handlers.set_vad_settings(vad_settings_for_rpc)
     rpc_handlers.set_mcp_servers(mcp_servers)
 
     if wake_word_detector:
@@ -128,12 +137,17 @@ async def entrypoint(ctx: JobContext):
     logger.info(f"  MCP: {len(mcp_servers)} server(s)")
     logger.info(f"  Wake Word: {'Enabled' if wake_word_detector else 'Disabled'}")
 
-    # Create agent session
+    # Create agent session with configurable LLM timeout and tool steps
+    llm_conn_options = APIConnectOptions(timeout=settings.llm_timeout)
+    conn_options = SessionConnectOptions(llm_conn_options=llm_conn_options)
+
     session = AgentSession(
         stt=streaming_stt,
         tts=tts,
         vad=vad,
         mcp_servers=mcp_servers if mcp_servers else None,
+        conn_options=conn_options,
+        max_tool_steps=settings.max_tool_steps,
     )
 
     # Event handlers for telemetry
@@ -190,9 +204,13 @@ async def entrypoint(ctx: JobContext):
 
         asyncio.create_task(emit_tool_telemetry())
 
+    # Use persisted system prompt
+    system_prompt = rpc_handlers.get_system_prompt()
+    logger.info(f"Using system prompt (length: {len(system_prompt)} chars)")
+
     await session.start(
         room=ctx.room,
-        agent=Agent(instructions=SYSTEM_PROMPT, llm=llm),
+        agent=Agent(instructions=system_prompt, llm=llm),
     )
 
     await telemetry.agent_state_change("idle")
